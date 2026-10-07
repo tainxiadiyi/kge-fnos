@@ -32,10 +32,11 @@ from video_playback import VideoPlayback
 from player_targets import PlayerTargets
 from web_catalog import WebCatalog
 from web_discovery import WebDiscovery
+from score_identity import ScoreIdentity
 from fnos_gateway import base_path, gateway_middleware, scoped_url, serve, issue_gateway_proof, valid_gateway_origin_proof
 
 COOKIE = 'maidong_session'
-PLAYER_FILES = frozenset(('webapp.js', 'webapp.css', 'web-player.js', 'web-audio.js', 'dsp-worklet.js'))
+PLAYER_FILES = frozenset(('webapp.js', 'webapp.css', 'web-player.js', 'web-audio.js', 'web-scorehub.js', 'dsp-worklet.js'))
 
 
 async def player_asset(req):
@@ -119,6 +120,7 @@ class Bridge:
         self.video_playback = VideoPlayback(self)
         self.web_catalog = WebCatalog(self)
         self.web_discovery = WebDiscovery(self)
+        self.score_identity = ScoreIdentity(self)
 
     def is_local(self, req):
         if req.get('fnos_gateway', False):
@@ -180,6 +182,7 @@ class Bridge:
                     'duration': s.get('duration', 0) / 1000,
                     'format': s.get('audioSpec', {}).get('format', ''), 'audio_only': True, 'media_kind': 'audio',
                     'coverId': s.get('coverId') or s.get('album', {}).get('coverId') or '',
+                    'isCue': s.get('isCue') if type(s.get('isCue')) is bool else None,
                     'revision': str(s.get('updatedAt', 0))}
             if len(rows) >= d['total'] or not items:
                 break
@@ -280,6 +283,8 @@ class Bridge:
 
     async def api(self, req):
         path = req.path
+        if path.startswith('/api/v2/score-identity/'):
+            return await self.score_identity.api(req)
         if path.startswith('/api/web/discovery/'):
             return await self.web_discovery.api(req)
         if path == '/api/web/context':
@@ -360,6 +365,8 @@ class Bridge:
             for key in ('playUrl', 'fallbackUrl', 'accompanimentUrl'):
                 if descriptor.get(key):
                     descriptor[key] = scoped_url(req, descriptor[key])
+            descriptor['scoreIdentity'] = {'status': 'pending',
+                'endpoint': scoped_url(req, f'/api/v2/score-identity/{sid}')}
             return web.json_response(descriptor)
         if path.startswith('/api/v2/sources'):
             return await self.sources.api(req)
@@ -875,6 +882,7 @@ class Bridge:
                                for ws in list(self.sockets)), return_exceptions=True)
 
     async def stop(self, app):
+        await self.score_identity.close()
         await self.sources.quark.close()
         await self.catalog.close()
         await self.video_playback.close()

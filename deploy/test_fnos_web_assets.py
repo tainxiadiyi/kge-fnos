@@ -15,7 +15,7 @@ spec.loader.exec_module(build)
 class BrowserPackageTests(unittest.TestCase):
     def test_only_runtime_and_reviewed_browser_assets_are_selected(self):
         included = ['bridge/server.py', 'bridge/web_catalog.py', 'bridge/singing.html', 'bridge/webapp.js',
-            'bridge/webapp.css', 'bridge/web-player.js', 'bridge/web-audio.js', 'bridge/dsp-worklet.js',
+            'bridge/webapp.css', 'bridge/web-player.js', 'bridge/web-audio.js', 'bridge/web-scorehub.js', 'bridge/dsp-worklet.js',
             'bridge/web-assets/android/icon.png', 'bridge/web-assets/vendor/hls.min.js',
             'bridge/web-assets/vendor/hls-LICENSE.txt', 'bridge/quark_source.py', 'bridge/quark_sources.html',
             'bridge/web-assets/vendor/qrcode.js', 'bridge/web-assets/vendor/STK.LICENSE.txt',

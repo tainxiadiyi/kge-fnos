@@ -68,7 +68,8 @@ async function main() {
     return {ok: true, status: 200, json: async () => body};
   };
   const audioURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-audio.js'), 'utf8'));
-  const playerURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-player.js'), 'utf8').replace("'./web-audio.js'", JSON.stringify(audioURL)));
+  const hubURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-scorehub.js'), 'utf8'));
+  const playerURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-player.js'), 'utf8').replace("'./web-audio.js'", JSON.stringify(audioURL)).replace("'./web-scorehub.js'", JSON.stringify(hubURL)));
   let source = fs.readFileSync(path.join(__dirname, 'webapp.js'), 'utf8');
   const html = fs.readFileSync(path.join(__dirname, 'singing.html'), 'utf8');
   eq(/<script[^>]+src=["'][^"']*hls\.min\.js/i.test(html), false, 'home does not block on the HLS library');

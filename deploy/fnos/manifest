@@ -1,5 +1,5 @@
 appname=feiniu-karaoke
-version=0.3.4-beta1
+version=0.3.5-beta1
 display_name=K歌
 desc=第三方独立 K歌播放器，在打开应用的手机或电脑上播放音乐、MV 和歌词，拥有独立待唱队列；首次使用请连接自己的媒体来源。麦克风、人声音效和参考评分需安全入口、宿主权限、设备授权及可用参考谱，当前为测试版。
 source=thirdparty
@@ -15,4 +15,4 @@ micro_app=true
 ctl_stop=true
 checkport=false
 disable_authorization_path=false
-changelog=NAS 应用显示名称统一为“K歌”，首页、设置与来源页面同步改名；新增原作者和原项目署名。保留原有应用标识、登录、曲库和本机记录，麦克风收音仍需安全入口、宿主权限与设备授权。
+changelog=接入独立 K歌评分应用，沿用当前飞牛账号读取原媒体评分谱并同步完整实唱成绩；新增评分中心连接状态与待同步提示。按原媒体及原唱音轨匹配，账号切换和断网保留原账号待办，麦克风仍需安全入口与设备授权。

@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const dataURL = text => 'data:text/javascript;base64,' + Buffer.from(text).toString('base64');
 const audioURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-audio.js'), 'utf8'));
-const playerURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-player.js'), 'utf8').replace("'./web-audio.js'", JSON.stringify(audioURL)));
+const hubURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-scorehub.js'), 'utf8'));
+const playerURL = dataURL(fs.readFileSync(path.join(__dirname, 'web-player.js'), 'utf8').replace("'./web-audio.js'", JSON.stringify(audioURL)).replace("'./web-scorehub.js'", JSON.stringify(hubURL)));
 
 class Media extends EventTarget {
   constructor() { super(); this.currentTime = 0; this.duration = 10; this.paused = true; this.playbackRate = 1; this.volume = 1; this.src = ''; this.muted = false; this.preservesPitch = true; }
@@ -70,13 +71,16 @@ async function main() {
   assert.throws(() => scopedMediaUrl('https://other.example/stream/7', context)); assert.throws(() => scopedMediaUrl('https://username:password@nas.example/stream/7', context)); checks += 4;
   global.location = context;
   const requests = [], errors = [], descriptors = new Map();
+  const binding = { serverId: 'a'.repeat(32), accountId: 'nas:1000' };
+  const scoreHub = () => ({ sessionId: 'f'.repeat(32), start() {}, close() {}, setPlaying() {}, identity: () => ({ ...binding }), usable: () => true, refreshSession: async () => ({ ...binding }),
+    fetchReference: async identity => { const url = '/hub/score/' + parseInt(identity.mediaSha256, 16); requests.push({ url }); const pending = deferred(); descriptors.set(url, pending); return pending.promise; }, queueResult: () => true });
   const api = async (url, options) => {
     requests.push({ url, options });
     if (url.startsWith('/api/lyrics/')) return { content: '[00:00.00]第一句\n[00:02.00]第二句' };
-    if (url.startsWith('/api/score/')) { const pending = deferred(); descriptors.set(url, pending); return pending.promise; }
+    if (url.startsWith('/api/v2/score-identity/')) { if (options.method === 'DELETE') return {}; const id = Number(url.split('/').at(-1)); return { status: 'ready', source: 'original-file-sha256', mediaSha256: id.toString(16).padStart(64, '0'), mediaBytes: 10000, originalAudioTrack: 0 }; }
     const pending = deferred(); descriptors.set(url, pending); return pending.promise;
   };
-  let ended = 0; const media = new Media(), states = [], player = new KaraokePlayer({ media, api, onState: value => states.push(value), onError: error => errors.push(error), onEnded: () => ended++ });
+  let ended = 0; const media = new Media(), states = [], player = new KaraokePlayer({ media, api, scoreHub: scoreHub(), onState: value => states.push(value), onError: error => errors.push(error), onEnded: () => ended++ });
   const first = player.load({ id: 1, title: '旧歌' }); await flush(); const second = player.load({ id: 2, title: '新歌' }); await flush();
   assert.equal(requests.find(request => request.url === '/api/v2/playback/1').options.signal.aborted, true); checks++;
   descriptors.get('/api/v2/playback/2').resolve({ mediaKind: 'mv', transport: 'progressive', playUrl: '/stream/2', audioTracks: [{ index: 0, name: '音轨 1' }, { index: 1, name: '音轨 2' }] }); await second;
@@ -90,13 +94,13 @@ async function main() {
   player.seek(99); assert.equal(media.currentTime, 10); player.setVolume(2); assert.equal(media.volume, 1); player.setRate(1.3); assert.equal(media.playbackRate, 1.3); assert.equal(media.preservesPitch, true); checks += 4;
   player.pause(); assert.equal(player.state.playing, false); await player.resume(); assert.equal(player.state.playing, true); checks += 2;
   player.state.micEnabled = true; player.setScoring(true); await flush();
-  assert.equal(requests.filter(request => request.url === '/api/score/2').length, 1); checks++;
+  assert.equal(requests.filter(request => request.url === '/hub/score/2').length, 1); checks++;
   const third = player.load({ id: 3, title: '下一首' }); await flush();
-  descriptors.get('/api/score/2').resolve({ status: 'ready', notes: Array(250).fill(69), stepMs: 40 }); await flush();
+  descriptors.get('/hub/score/2').resolve({ status: 'ready', notes: Array(250).fill(69), stepMs: 40, hubBinding: binding }); await flush();
   assert.equal(player.reference, null, 'stale score response cannot attach to a new song'); checks++;
   descriptors.get('/api/v2/playback/3').resolve({ mediaKind: 'audio', transport: 'progressive', playUrl: '/stream/3' }); await third; await flush();
-  descriptors.get('/api/score/3').resolve({ status: 'ready', notes: Array(250).fill(69), stepMs: 40, accompaniment: true }); await flush();
-  assert.equal(player.state.scoreStatus, 'ready'); assert.equal(player.state.capabilities.original, true); assert.equal(player.state.score, null, 'reference availability cannot invent a singing score'); checks += 3;
+  descriptors.get('/hub/score/3').resolve({ status: 'ready', notes: Array(250).fill(69), stepMs: 40, hubBinding: binding }); await flush();
+  assert.equal(player.state.scoreStatus, 'ready'); assert.equal(player.state.capabilities.original, false, 'remote spectrum does not manufacture an accompaniment source'); assert.equal(player.state.score, null, 'reference availability cannot invent a singing score'); checks += 3;
   assert.equal(player.state.melody.stepMs, 40); assert.equal(player.state.melody.notes.length, 250); checks += 2;
   for (let i = 0; i < 80; i++) { media.currentTime = i * .04; player.observeMic({ pitch: 69, level: .5, delayMs: 0 }); }
   assert.equal(player.state.score.score, 100); assert.equal(player.actualPitchAt(40), 69); assert.equal(player.state.currentLineScore.score, 100); checks += 3;
@@ -119,14 +123,14 @@ async function main() {
   }
   Hls.instances = []; global.Hls = Hls;
   const hlsMedia = new Media(); hlsMedia.canPlayType = () => 'maybe';
-  const hlsPlayer = new KaraokePlayer({ media: hlsMedia, api: async url => url.startsWith('/api/lyrics/') ? {} : ({ mediaKind: 'mv', transport: 'hls', playUrl: '/mv/4/master.m3u8', audioTracks: [{ index: 0 }, { index: 1 }] }) });
+  const hlsPlayer = new KaraokePlayer({ media: hlsMedia, scoreHub: scoreHub(), api: async url => url.startsWith('/api/lyrics/') ? {} : ({ mediaKind: 'mv', transport: 'hls', playUrl: '/mv/4/master.m3u8', audioTracks: [{ index: 0 }, { index: 1 }] }) });
   await hlsPlayer.load({ id: 4 }); const hls = Hls.instances.at(-1);
   assert.equal(hls.url, 'https://nas.example/app/feiniu-karaoke/mv/4/master.m3u8'); checks++;
   const xhr = {}; hls.options.xhrSetup(xhr, 'index_audio0.m3u8'); assert.equal(xhr.withCredentials, true); assert.throws(() => hls.options.xhrSetup({}, 'https://external.example/media.ts')); checks += 2;
   await hlsPlayer.setAudioTrack(1); assert.equal(hls.audioTrack, 1); assert.equal(hlsPlayer.state.capabilities.original, false); checks += 2;
   await hlsPlayer.destroy(); assert.equal(hls.destroyed, true); checks++; delete global.Hls;
 
-  const localRequests = [], localPlayer = new KaraokePlayer({ media: new Media(), api: async url => localRequests.push(url) });
+  const localRequests = [], localPlayer = new KaraokePlayer({ media: new Media(), scoreHub: scoreHub(), api: async url => localRequests.push(url) });
   await localPlayer.load({ objectUrl: 'blob:local-music', mimeType: 'audio/wav', lyricsContent: '[00:01.00]本机歌词' }); assert.equal(localPlayer.state.lyrics[0].text, '本机歌词'); assert.equal(localRequests.length, 0); checks += 2;
   localPlayer.state.micEnabled = true; localPlayer.setScoring(true); await flush(); assert.equal(localPlayer.state.scoreStatus, 'unavailable'); assert.equal(localRequests.length, 0); checks += 2; await localPlayer.destroy();
 

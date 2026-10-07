@@ -3,13 +3,14 @@ import argparse
 import hashlib
 import json
 import io
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER_FILES = frozenset(('webapp.js', 'webapp.css', 'web-player.js', 'web-audio.js', 'dsp-worklet.js'))
+PLAYER_FILES = frozenset(('webapp.js', 'webapp.css', 'web-player.js', 'web-audio.js', 'web-scorehub.js', 'dsp-worklet.js'))
 VENDOR_PROVENANCE = frozenset(('HLS-PROVENANCE.json', 'QRCODE-PROVENANCE.json'))
 
 
@@ -64,14 +65,35 @@ def normalize_archive_modes(payload, *, package=False):
     """fnpack on Windows emits 0666/0777; ship portable POSIX permissions."""
     result = io.BytesIO()
     with tarfile.open(fileobj=io.BytesIO(payload), mode='r:*') as source, tarfile.open(fileobj=result, mode='w:gz') as dest:
+        seen, canonical_members = {}, []
         for member in source.getmembers():
-            if not (member.isfile() or member.isdir()):
-                raise ValueError('安装包不得包含符号链接或特殊文件')
-            content = source.extractfile(member).read() if member.isfile() else None
-            if package and member.name == 'app.tgz':
-                content = normalize_archive_modes(content)
+            canonical = PurePosixPath(member.name).as_posix()
+            if (not member.name or member.name.startswith('/') or '\\' in member.name or ':' in member.name
+                    or any(ord(c) < 32 for c in member.name) or '..' in PurePosixPath(member.name).parts
+                    or canonical in seen or canonical == '.' and not member.isdir()
+                    or not (member.isfile() or member.isdir())):
+                raise ValueError('安装包只能包含无路径别名的安全普通文件和目录')
+            # fnpack's relative './' names are valid; duplicate canonical paths
+            # must never overwrite payload or the final checksum manifest.
+            seen[canonical] = member
+            canonical_members.append((canonical, member))
+        replaced = {}
+        if package:
+            if not all(name in seen and seen[name].isfile() for name in ('app.tgz', 'manifest')):
+                raise ValueError('安装包必须包含普通 app.tgz 和 manifest 文件')
+            replaced['app.tgz'] = normalize_archive_modes(source.extractfile(seen['app.tgz']).read())
+            checksum = hashlib.md5(replaced['app.tgz']).hexdigest().encode('ascii')
+            manifest = source.extractfile(seen['manifest']).read()
+            matches = list(re.finditer(rb'(?m)^([ \t]*checksum[ \t]*=[ \t]*)([^\r\n]*?)([ \t]*)(?=\r|\n|$)', manifest))
+            if len(matches) != 1:
+                raise ValueError('manifest 必须恰好包含一个 checksum 字段')
+            match = matches[0]
+            replaced['manifest'] = manifest[:match.start(2)] + checksum + manifest[match.end(2):]
+        for canonical, member in canonical_members:
+            content = replaced[canonical] if canonical in replaced else source.extractfile(member).read() if member.isfile() else None
+            if content is not None:
                 member.size = len(content)
-            member.mode = 0o755 if member.isdir() or package and member.name.startswith('cmd/') else 0o644
+            member.mode = 0o755 if member.isdir() or package and canonical.startswith('cmd/') else 0o644
             member.uid = member.gid = 0
             member.uname = member.gname = 'root'
             dest.addfile(member, io.BytesIO(content) if content is not None else None)
